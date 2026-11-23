@@ -1,0 +1,53 @@
+{
+  "description": "Boundary toy: single-code intervals, a two-piece source and target domain, negative codes, and a one-code crossing.",
+  "source_spaces": {
+    "s": [
+      [
+        -5,
+        -1
+      ],
+      [
+        0,
+        5
+      ]
+    ]
+  },
+  "target_spaces": {
+    "t": [
+      [
+        -100,
+        -96
+      ],
+      [
+        10,
+        15
+      ]
+    ]
+  },
+  "rules": [
+    {
+      "id": "up",
+      "source_space": "s",
+      "source_range": [
+        -5,
+        2
+      ],
+      "priority": 5,
+      "target_space": "t",
+      "direction": 1,
+      "offset": 10
+    },
+    {
+      "id": "down",
+      "source_space": "s",
+      "source_range": [
+        0,
+        5
+      ],
+      "priority": 5,
+      "target_space": "t",
+      "direction": -1,
+      "offset": 10
+    }
+  ]
+}

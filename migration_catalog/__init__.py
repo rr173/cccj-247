@@ -1,0 +1,51 @@
+"""Library entry point: ``Catalog`` / ``load_spec`` / ``spec_from_dict``."""
+
+from .core import (
+    SRC_CONFLICT,
+    SRC_DISABLED,
+    SRC_MAPPED,
+    SRC_MISSING,
+    SRC_OUT_OF_DOMAIN,
+    SRC_OUT_OF_RANGE,
+    TGT_AMBIGUOUS,
+    TGT_OUT_OF_DOMAIN,
+    TGT_UNIQUE,
+    TGT_UNUSED,
+    Catalog,
+    MigrationReport,
+    Preimage,
+    SourceHit,
+    SourceSegment,
+    TargetHit,
+    TargetSegment,
+)
+from .intervals import Interval
+from .model import DISABLE, MAPPING, MigrationSpec, Rule, Shift, load_spec, spec_from_dict
+
+__all__ = [
+    "Catalog",
+    "DISABLE",
+    "Interval",
+    "MAPPING",
+    "MigrationReport",
+    "MigrationSpec",
+    "Preimage",
+    "Rule",
+    "SRC_CONFLICT",
+    "SRC_DISABLED",
+    "SRC_MAPPED",
+    "SRC_MISSING",
+    "SRC_OUT_OF_DOMAIN",
+    "SRC_OUT_OF_RANGE",
+    "Shift",
+    "SourceHit",
+    "SourceSegment",
+    "TGT_AMBIGUOUS",
+    "TGT_OUT_OF_DOMAIN",
+    "TGT_UNIQUE",
+    "TGT_UNUSED",
+    "TargetHit",
+    "TargetSegment",
+    "load_spec",
+    "spec_from_dict",
+]

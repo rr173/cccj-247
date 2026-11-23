@@ -1,0 +1,191 @@
+{
+  "description": "Worked example: overlapping priority rules, a crossing pair that meets at exactly one old code, a disable, an invalid out-of-range winner, missing codes, and integer ranges far beyond 64 bits.",
+  "source_spaces": {
+    "legacy": [
+      [
+        0,
+        1000
+      ],
+      [
+        5000,
+        5009
+      ],
+      [
+        1000000000000000000000000000000,
+        1000000001000000000000000000000
+      ]
+    ],
+    "aux": [
+      [
+        0,
+        100
+      ]
+    ]
+  },
+  "target_spaces": {
+    "modern": [
+      [
+        1000000,
+        1000999
+      ],
+      [
+        2000000,
+        2000999
+      ],
+      [
+        10000000000000000000000000000000000000000,
+        10000000000000000001000000000000000000000
+      ]
+    ],
+    "archive": [
+      [
+        7000000,
+        7000999
+      ]
+    ]
+  },
+  "rules": [
+    {
+      "id": "core-shift",
+      "source_space": "legacy",
+      "source_range": [
+        0,
+        800
+      ],
+      "priority": 50,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000000
+    },
+    {
+      "id": "late-shift",
+      "source_space": "legacy",
+      "source_range": [
+        700,
+        900
+      ],
+      "priority": 50,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000000
+    },
+    {
+      "id": "reverse-alias",
+      "source_space": "legacy",
+      "source_range": [
+        820,
+        880
+      ],
+      "priority": 50,
+      "target_space": "modern",
+      "direction": -1,
+      "offset": 1001700
+    },
+    {
+      "id": "priority-override",
+      "source_space": "legacy",
+      "source_range": [
+        300,
+        350
+      ],
+      "priority": 90,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1999700
+    },
+    {
+      "id": "out-of-range",
+      "source_space": "legacy",
+      "source_range": [
+        400,
+        450
+      ],
+      "priority": 60,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 5000000
+    },
+    {
+      "id": "retire",
+      "source_space": "legacy",
+      "source_range": [
+        500,
+        520
+      ],
+      "priority": 70,
+      "action": "disable"
+    },
+    {
+      "id": "archive-route",
+      "source_space": "legacy",
+      "source_range": [
+        900,
+        950
+      ],
+      "priority": 60,
+      "target_space": "archive",
+      "direction": -1,
+      "offset": 7000950
+    },
+    {
+      "id": "wide",
+      "source_space": "legacy",
+      "source_range": [
+        1000000000000000000000000000000,
+        1000000001000000000000000000000
+      ],
+      "priority": 80,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 9999999999000000000000000000000000000000
+    },
+    {
+      "id": "aux-high",
+      "source_space": "aux",
+      "source_range": [
+        0,
+        20
+      ],
+      "priority": 90,
+      "target_space": "archive",
+      "direction": 1,
+      "offset": 7000100
+    },
+    {
+      "id": "aux-b-high",
+      "source_space": "aux",
+      "source_range": [
+        21,
+        40
+      ],
+      "priority": 90,
+      "target_space": "archive",
+      "direction": 1,
+      "offset": 7000200
+    },
+    {
+      "id": "aux-b-low",
+      "source_space": "aux",
+      "source_range": [
+        21,
+        40
+      ],
+      "priority": 20,
+      "target_space": "modern",
+      "direction": -1,
+      "offset": 1000640
+    },
+    {
+      "id": "aux-mirror",
+      "source_space": "aux",
+      "source_range": [
+        0,
+        100
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": -1,
+      "offset": 1000900
+    }
+  ]
+}

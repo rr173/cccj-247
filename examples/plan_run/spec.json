@@ -1,0 +1,99 @@
+{
+  "description": "Rollout planner demo: one main shift, an aliasing second space, negative codes, and codes far beyond 64 bits.",
+  "source_spaces": {
+    "legacy": [
+      [
+        0,
+        99
+      ]
+    ],
+    "legacy2": [
+      [
+        0,
+        5
+      ]
+    ],
+    "legacy_neg": [
+      [
+        -10,
+        -1
+      ]
+    ],
+    "legacy_wide": [
+      [
+        1000000000000000000000000000000,
+        1000000000000000000000000000009
+      ]
+    ]
+  },
+  "target_spaces": {
+    "modern": [
+      [
+        1000,
+        1199
+      ]
+    ],
+    "modern_neg": [
+      [
+        -1010,
+        -1001
+      ]
+    ],
+    "modern_wide": [
+      [
+        10000000000000000000000000000000000000000,
+        10000000000000000000000000000000000000009
+      ]
+    ]
+  },
+  "rules": [
+    {
+      "id": "legacy-shift",
+      "source_space": "legacy",
+      "source_range": [
+        0,
+        90
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000
+    },
+    {
+      "id": "legacy2-shift",
+      "source_space": "legacy2",
+      "source_range": [
+        3,
+        3
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000
+    },
+    {
+      "id": "neg-shift",
+      "source_space": "legacy_neg",
+      "source_range": [
+        -10,
+        -1
+      ],
+      "priority": 10,
+      "target_space": "modern_neg",
+      "direction": 1,
+      "offset": -1000
+    },
+    {
+      "id": "wide-shift",
+      "source_space": "legacy_wide",
+      "source_range": [
+        1000000000000000000000000000000,
+        1000000000000000000000000000009
+      ],
+      "priority": 10,
+      "target_space": "modern_wide",
+      "direction": 1,
+      "offset": 9999999999000000000000000000000000000000
+    }
+  ]
+}

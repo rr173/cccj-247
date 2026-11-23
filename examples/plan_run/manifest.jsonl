@@ -1,0 +1,17 @@
+{"id": "A1", "current": {"space": "modern", "code": "1001"}, "unit": "alpha", "old": {"space": "legacy", "code": "1"}}
+{"id": "A2", "current": {"space": "modern", "code": "7"}, "unit": "alpha", "old": {"space": "legacy", "code": "2"}}
+{"id": "B1", "current": {"space": "modern", "code": "60"}, "unit": "beta", "old": {"space": "legacy", "code": "5"}}
+{"id": "G1", "current": {"space": "modern", "code": "1005"}, "unit": "gamma", "old": {"space": "legacy", "code": "8"}}
+{"id": "D1", "current": {"space": "modern", "code": "1010"}, "unit": "delta", "old": {"space": "legacy", "code": "11"}}
+{"id": "E1", "current": {"space": "modern", "code": "1011"}, "unit": "epsilon", "old": {"space": "legacy", "code": "10"}}
+{"id": "H1", "current": {"space": "modern", "code": "1021"}, "unit": "eta", "old": {"space": "legacy", "code": "20"}}
+{"id": "T1", "current": {"space": "modern", "code": "31"}, "unit": "theta", "old": {"space": "legacy", "code": "30"}}
+{"id": "I1", "current": {"space": "modern", "code": "32"}, "unit": "iota", "old": {"space": "legacy", "code": "30"}}
+{"id": "K1", "current": {"space": "modern", "code": "81"}, "unit": "kappa", "old": {"space": "legacy", "code": "21"}}
+{"id": "M1", "current": {"space": "modern", "code": "1040"}, "unit": "mu", "old": {"space": "legacy", "code": "40"}}
+{"id": "N1", "current": {"space": "modern", "code": "90"}, "unit": "nu", "old": {"space": "legacy_neg", "code": "-5"}}
+{"id": "O1", "current": {"space": "modern", "code": "91"}, "unit": "omicron", "old": {"space": "legacy_wide", "code": "1000000000000000000000000000003"}}
+{"id": "P1", "current": {"space": "modern", "code": "95"}, "unit": "pi", "old": {"space": "legacy", "code": "95"}}
+{"id": "Z1", "current": {"space": "modern", "code": "96"}, "unit": "zeta", "old": {"space": "legacy2", "code": "3"}}
+{"id": "KEEP-1", "current": {"space": "modern", "code": "1020"}}
+{"id": "KEEP-2", "current": {"space": "modern", "code": "1099"}}

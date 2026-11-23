@@ -1,0 +1,59 @@
+{
+  "facts": [
+    {
+      "amount": 500,
+      "id": "F1",
+      "old_code": 1,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 300,
+      "id": "F2",
+      "old_code": 2,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 250,
+      "id": "F3",
+      "old_code": 3,
+      "old_space": "legacy"
+    },
+    {
+      "amount": -800,
+      "id": "F4",
+      "old_code": 4,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 111,
+      "id": "F5",
+      "old_code": 10,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 222,
+      "id": "F6",
+      "old_code": 15,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 1000000000000000000000000000007,
+      "id": "F7",
+      "old_code": 1000000000000000000000000000000,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 0,
+      "id": "F8",
+      "old_code": 8,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 99,
+      "id": "F9",
+      "old_code": 88,
+      "old_space": "aux"
+    }
+  ],
+  "seq": 1
+}

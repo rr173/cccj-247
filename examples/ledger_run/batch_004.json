@@ -1,0 +1,52 @@
+{
+  "facts": [],
+  "rules": [
+    {
+      "direction": 1,
+      "id": "main",
+      "offset": 1000,
+      "priority": 10,
+      "source_range": [
+        0,
+        9
+      ],
+      "source_space": "legacy",
+      "target_space": "modern"
+    },
+    {
+      "action": "disable",
+      "id": "retire",
+      "priority": 20,
+      "source_range": [
+        10,
+        12
+      ],
+      "source_space": "legacy"
+    },
+    {
+      "direction": -1,
+      "id": "aux-mirror",
+      "offset": 1089,
+      "priority": 10,
+      "source_range": [
+        85,
+        89
+      ],
+      "source_space": "aux",
+      "target_space": "modern"
+    },
+    {
+      "direction": 1,
+      "id": "wide",
+      "offset": 1000,
+      "priority": 10,
+      "source_range": [
+        1000000000000000000000000000000,
+        1000000000000000000000000000009
+      ],
+      "source_space": "legacy",
+      "target_space": "modern"
+    }
+  ],
+  "seq": 4
+}

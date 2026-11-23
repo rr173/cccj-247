@@ -1,0 +1,11 @@
+{
+  "facts": [
+    {
+      "amount": 77,
+      "id": "F2",
+      "old_code": 6,
+      "old_space": "legacy"
+    }
+  ],
+  "seq": 6
+}

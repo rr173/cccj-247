@@ -1,0 +1,91 @@
+{
+  "description": "Ledger demo catalogue: two source spaces, one target.",
+  "source_spaces": {
+    "legacy": [
+      [
+        0,
+        20
+      ],
+      [
+        400,
+        499
+      ],
+      [
+        1000000000000000000000000000000,
+        1000000000000000000000000000009
+      ]
+    ],
+    "aux": [
+      [
+        80,
+        99
+      ]
+    ]
+  },
+  "target_spaces": {
+    "modern": [
+      [
+        1000,
+        1019
+      ],
+      [
+        1000000000000000000000000001000,
+        1000000000000000000000000001009
+      ]
+    ],
+    "archive": [
+      [
+        9000,
+        9009
+      ]
+    ]
+  },
+  "rules": [
+    {
+      "id": "main",
+      "source_space": "legacy",
+      "source_range": [
+        0,
+        9
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000
+    },
+    {
+      "id": "retire",
+      "source_space": "legacy",
+      "source_range": [
+        10,
+        12
+      ],
+      "priority": 20,
+      "action": "disable"
+    },
+    {
+      "id": "aux-mirror",
+      "source_space": "aux",
+      "source_range": [
+        85,
+        89
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": -1,
+      "offset": 1089
+    },
+    {
+      "id": "wide",
+      "source_space": "legacy",
+      "source_range": [
+        1000000000000000000000000000000,
+        1000000000000000000000000000009
+      ],
+      "priority": 10,
+      "target_space": "modern",
+      "direction": 1,
+      "offset": 1000
+    }
+  ]
+}

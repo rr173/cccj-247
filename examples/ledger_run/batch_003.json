@@ -1,0 +1,23 @@
+{
+  "facts": [
+    {
+      "amount": 650,
+      "id": "F1",
+      "old_code": 1,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 77,
+      "id": "F2",
+      "old_code": 6,
+      "old_space": "legacy"
+    },
+    {
+      "amount": 42,
+      "id": "F8",
+      "old_code": 7,
+      "old_space": "legacy"
+    }
+  ],
+  "seq": 3
+}

@@ -160,3 +160,116 @@ catalog.report().approval_ready                  # 批准状态
 - **见证栈**：`ambiguous` 的 `witness` 固定取两个**不同源位置**（空间+码），不会把
   同一位置被多条规则覆盖误判成多义。
 - **不物化**：目录与查询均以区间 + 仿射参数表示，`--text` 只打印区间端点。
+
+---
+
+# 本地 SQLite 账本（migration_ledger）
+
+目录只回答"某个码在规则下意味着什么"，但财务切换需要一张随**实际入账**与**规则更正**
+持续更新的余额表。`migration_ledger/` 在不重复查询迁移目录的前提下，提供一个可重开的
+单文件 SQLite 账本。
+
+## 语义（严格按批次结束时的事实与规则）
+
+| 概念 | 处理 |
+| --- | --- |
+| 事实键 | 业务行 ID；内容为旧码空间、合法旧码、带符号整分金额（任意精度，金额/码均可超 64 位） |
+| 批次动作 | 整行写入（可改金额、可移到别的旧码）或按 ID 删除；同一 ID 一批只出现一次；撤销不存在的 ID 是输入错误 |
+| 规则 | 批次可整体替换规则，但合法域在初始化后冻结；批次不含 `rules` 时沿用上批已提交规则，`"rules": []` 是显式清空 |
+| 入表条件 | 旧码在批次结束目录里是有效 `mapped`，**且**新码反向状态为 `unique`（按声明域恰有一个合法旧码来源，与别处有没有入账无关） |
+| 阻塞不连带 | `disabled` / `missing` / `conflict` / `out_of_range` 的旧码与 `ambiguous` 的新码不产生余额行；其他码段仍合格的事实照常入表 |
+| 暂不能入表的事实 | 仍留在库中保留最新内容，之后每次刷新都按最新规则重新参与汇总（竞争出现→余额行消失；竞争解除→纳入其间已更正且未撤销的事实） |
+| 余额行 | 每个有贡献的新码给出事实条数 `fact_count` 与精确金额和 `amount_sum`；金额为零仍可能有事实，无事实则无该行 |
+| 批次号 | 从 1 连续递增；同号同字节文件重放为幂等 no-op；同号不同内容、跳号、非法输入一律报错且不改变已提交状态 |
+| 原子性 | 一次提交的事实、规则版本、余额、批次行在**单个 SQLite 事务**内发布；进程中途被杀，重开只能看到整批之前或之后 |
+
+## 局部刷新：不扫描全部存量事实
+
+规则替换后，受影响的只有"新旧目录映射发生变化"的位置。刷新分三步，全部走
+`(old_space, code_key)` 索引，不做全表扫描：
+
+1. 本批点名的事实（写入后的新位置 + 写入前的旧位置，保证移动/删除能回收旧行）；
+2. 符号化对比新旧目录的源端分段，对分类变化的源区间做索引范围查询；
+3. 符号化对比目标端反向分段（含贡献者源区间端点在目标空间的投影，处理同一 unique
+   段内逐码原码身份变化），回收其中的存量余额行，并按贡献者源区间索引取事实。
+
+`RefreshStats` 暴露实际触及的事实行数与受影响区间，可直接核对局部性；示例在 20,000 条
+无关"冷事实"上做局部规则变更，刷新只触及个位数事实，并用 `EXPLAIN QUERY PLAN` 证明
+查询计划是 `SEARCH ... USING INDEX fact_position_idx` 而非 `SCAN fact`。
+
+## 结构
+
+```
+migration_ledger/
+  keys.py     任意精度整数的可排序文本键（数值序，支持负数与超 64 位码）
+  refresh.py  新旧目录的符号化差异与局部余额刷新（不展开闭区间）
+  ledger.py   SQLite schema、批次严格校验、单事务提交、余额/事实读取 API
+  cli.py      init / submit / balance / head / facts / seqs 命令行
+bin/migration-ledger  隔离模式（python3 -I）入口
+examples/ledger_demo.py  可复跑端到端示例（含真实进程中断与冷事实局部性核对）
+tests/test_ledger.py     79 项测试，含 150 组随机批次对逐码枚举 oracle 的交叉验证
+```
+
+## 批次文件格式
+
+```json
+{
+  "seq": 2,
+  "rules": [ /* 可选；整体替换，规则格式与迁移目录规格一致；省略则继承 */ ],
+  "facts": [
+    {"id": "INV-1", "old_space": "legacy", "old_code": 850, "amount": 12345},
+    {"id": "INV-2", "old_space": "legacy", "old_code": 851, "amount": -500},
+    {"id": "INV-OLD", "action": "delete"}
+  ]
+}
+```
+
+顶层只允许 `seq` / `rules` / `facts`，未知字段、布尔金额、越界旧码、批内重复 ID 等都在
+写事务之前报错。
+
+## 使用
+
+```bash
+# 用现有目录规格初始化一个空库（合法域冻结，规则取规格中的初始规则，版本号 0）
+python3 -I bin/migration-ledger init path/to/ledger.db examples/example.json
+
+# 提交批次（按文件原始字节做 sha256；输出含局部刷新统计）
+python3 -I bin/migration-ledger submit path/to/ledger.db batch_002.json
+
+# 当前余额表（可按目标空间/新码点查；每行附 head_seq 与 updated_seq）
+python3 -I bin/migration-ledger balance path/to/ledger.db --space modern --code 1000805
+python3 -I bin/migration-ledger head path/to/ledger.db
+
+# 可复跑示例（在 examples/ledger_run/ 下生成规格、批次与一个全新的库）
+python3 -I examples/ledger_demo.py
+
+# 测试
+python3 -m unittest discover -s tests -v
+```
+
+库用法：
+
+```python
+from migration_catalog import load_spec
+from migration_ledger import Ledger
+
+ledger = Ledger.initialize("finance.db", load_spec("examples/example.json"))
+result = ledger.submit_file("batch_001.json")
+result.refresh.fact_rows_touched      # 实际触及的事实行数（局部性证据）
+ledger.get_balance("modern", 1000805) # None 表示该新码当前无贡献余额行
+ledger.list_balances("modern")        # 当前全部余额行，均附 head_seq
+ledger.close()
+
+Ledger.open("finance.db")             # 任意时刻重开，状态完全来自 SQLite
+```
+
+## 设计取舍
+
+- **码与金额按十进制 TEXT 存储**：SQLite INTEGER 只有 64 位；数值顺序由 `keys.py` 的
+  定形可排序键承担，`BETWEEN` 范围查询与点查都走同一索引，金额和在 Python 侧精确求和。
+- **只物化余额，不物化码对**：规则版本整体存为 JSON 并在内存中编译为 `Catalog`；目录
+  仍由 `migration_catalog` 符号化构建，闭区间从不逐整数展开。
+- **余额表只放有贡献的 unique 新码**：唯一性按声明域计算，无事实的 unique 码、阻塞码
+  都不建行；事实表与 `fact_history` 保留全部已声明事实及每次写入/撤销的审计轨迹。
+- **单连接单写者**：不支持并发写；`BEGIN IMMEDIATE` + WAL + `synchronous=FULL` 保证
+  单写者下的崩溃原子性与重开一致性。

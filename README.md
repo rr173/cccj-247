@@ -203,11 +203,14 @@ catalog.report().approval_ready                  # 批准状态
 migration_ledger/
   keys.py     任意精度整数的可排序文本键（数值序，支持负数与超 64 位码）
   refresh.py  新旧目录的符号化差异与局部余额刷新（不展开闭区间）
+  delivery.py 逐笔交付：基线快照、批内明细变更、原子文件导出与校验读取
   ledger.py   SQLite schema、批次严格校验、单事务提交、余额/事实读取 API
-  cli.py      init / submit / balance / head / facts / seqs 命令行
+  cli.py      init / submit / balance / head / facts / seqs / delivery-* 命令行
 bin/migration-ledger  隔离模式（python3 -I）入口
-examples/ledger_demo.py  可复跑端到端示例（含真实进程中断与冷事实局部性核对）
-tests/test_ledger.py     79 项测试，含 150 组随机批次对逐码枚举 oracle 的交叉验证
+examples/ledger_demo.py    可复跑端到端示例（含真实进程中断与冷事实局部性核对）
+examples/delivery_demo.py  逐笔交付可复跑示例（基线 + 变更 → 按 ID 恢复明细）
+tests/test_ledger.py       79 项测试，含 150 组随机批次对逐码枚举 oracle 的交叉验证
+tests/test_delivery.py     逐笔交付：基线稳定性、区间、原子导出、局部性与随机 oracle
 ```
 
 ## 批次文件格式
@@ -240,8 +243,14 @@ python3 -I bin/migration-ledger submit path/to/ledger.db batch_002.json
 python3 -I bin/migration-ledger balance path/to/ledger.db --space modern --code 1000805
 python3 -I bin/migration-ledger head path/to/ledger.db
 
+# 逐笔交付：启用基线、导出基线、导出 (L, H] 变更（详见下一节）
+python3 -I bin/migration-ledger delivery-enable path/to/ledger.db
+python3 -I bin/migration-ledger delivery-baseline path/to/ledger.db out/baseline.ndjson
+python3 -I bin/migration-ledger delivery-changes path/to/ledger.db out/changes.ndjson --low 3 --high 8
+
 # 可复跑示例（在 examples/ledger_run/ 下生成规格、批次与一个全新的库）
 python3 -I examples/ledger_demo.py
+python3 -I examples/delivery_demo.py
 
 # 测试
 python3 -m unittest discover -s tests -v
@@ -261,6 +270,11 @@ ledger.list_balances("modern")        # 当前全部余额行，均附 head_seq
 ledger.close()
 
 Ledger.open("finance.db")             # 任意时刻重开，状态完全来自 SQLite
+
+# 逐笔交付（详见下一节）
+ledger.enable_delivery()              # 一次启用；返回 S 与基线事实数
+ledger.export_baseline("out/baseline.ndjson")
+ledger.export_changes(3, 8, "out/changes.ndjson")
 ```
 
 ## 设计取舍
@@ -273,3 +287,90 @@ Ledger.open("finance.db")             # 任意时刻重开，状态完全来自 
   都不建行；事实表与 `fact_history` 保留全部已声明事实及每次写入/撤销的审计轨迹。
 - **单连接单写者**：不支持并发写；`BEGIN IMMEDIATE` + WAL + `synchronous=FULL` 保证
   单写者下的崩溃原子性与重开一致性。
+
+---
+
+# 逐笔可重放交付（migration_ledger.delivery）
+
+余额表只有**当前汇总**：两个新码的余额与条数都没变，两笔事实也可能已经互换归属。
+`delivery` 在此基础上给下游一份可重放的逐笔交付——**基线 + 按批次的明细变更**，
+下游只用交付文件即可恢复某一批次结束时的入表明细，不必拿原始批次、不读源库、不重跑迁码规则。
+
+## 语义
+
+| 概念 | 处理 |
+| --- | --- |
+| 首次启用 | 在已有数据的账本上也可启用；起点 `S` = 首次成功启用时已提交的批次号（空库为 `0`） |
+| 基线 | `S` 那一批结束时每笔**入表**事实的 `id`、`target_space`、`new_code`、整分 `amount`，按 `id` 排序 |
+| 基线不漂移 | 快照持久化在 `delivery_baseline`；重开账本或重复启用仍返回同一个 `S` 与同一份内容，绝不用最新状态覆盖 |
+| `S` 之前 | 不提供逐笔变更（已含在基线快照里） |
+| 变更区间 | 下游指定 `(L, H]`，须 `S ≤ L < H` 且 `H` 已提交 |
+| 批次可识别 | 区间内每个已提交批次都有一条 `batch` 记录（含 `changes` 计数），无变化的批次也能推进检查点 |
+| 每条变更 | 按 `id` 排序；一个 ID 只给一组**批前 / 批后**；未入表的一侧为 `null`；两侧相同则不出现 |
+| 批前 / 批后 | 分别对应各自**已提交**的事实与规则（上一批结束 / 本批结束），不会把同批中途归属发出去 |
+| 规则改动 | 未点名的事实也可能撤下、恢复或转入别的新码；只有规则**证据**变动而入表明细不变时，不新增记录 |
+| 零金额 | 金额为零的入表事实仍是明细 |
+| 无损 | 码与金额以十进制字符串写出，超出 64 位的值也可精确读回 |
+| 入表判定 | 沿用账本的有效映射（`mapped`）与目标唯一性（`unique`）规则 |
+
+## 命令
+
+```bash
+# 首次启用：在链当前 head 处建立基线快照（重复执行是幂等 no-op）
+python3 -I bin/migration-ledger delivery-enable path/to/ledger.db
+python3 -I bin/migration-ledger delivery-status path/to/ledger.db   # {"enabled": true, "start_seq": S}
+
+# 交付基线文件（原子写入指定路径）
+python3 -I bin/migration-ledger delivery-baseline path/to/ledger.db out/baseline.ndjson
+
+# 交付 (L, H] 的逐笔变更（H 必须已提交）
+python3 -I bin/migration-ledger delivery-changes path/to/ledger.db out/changes.ndjson --low 3 --high 8
+
+# 可复跑示例：建库→启用→更正/换码→领基线+变更→按 ID 恢复并核对
+python3 -I examples/delivery_demo.py
+```
+
+库用法：
+
+```python
+from migration_ledger import Ledger, apply_records, iter_delivery_file
+
+ledger = Ledger.open("finance.db")
+ledger.enable_delivery()                 # {"start_seq": S, "baseline_facts": n, ...}
+ledger.export_baseline("out/baseline.ndjson")
+ledger.export_changes(3, 8, "out/changes.ndjson")
+
+# 下游消费：基线 + 若干区间，按 ID 折叠成明细表（逐行流式，不整文件入内存）
+records = list(iter_delivery_file("out/baseline.ndjson")) + \
+          list(iter_delivery_file("out/changes.ndjson"))
+last_seq, details = apply_records(records)   # details: {fact_id: {target_space, new_code, amount}}
+```
+
+## 文件格式（NDJSON，帧定界）
+
+```jsonc
+{"type":"delivery_start","format":"migration-ledger-delivery/1","kind":"changes","start_seq":3,"low":3,"high":8}
+{"type":"batch","seq":4,"changes":1}
+{"type":"change","id":"INV-1",
+ "before":{"target_space":"modern","new_code":"1005","amount":"100"},
+ "after": {"target_space":"modern","new_code":"1006","amount":"100"}}
+{"type":"batch","seq":5,"changes":0}
+{"type":"delivery_end","low":3,"high":8,"last_seq":8,"sha256":"…"}
+```
+
+基线文件为 `kind: "baseline"`，正文是 `{"type":"fact","id","target_space","new_code","amount"}`。
+`delivery_end.sha256` 覆盖其之前的全部字节；`iter_delivery_file` 会校验帧与摘要，
+截断或被改写的文件不会被当成完整交付消费。
+
+## 原子性与局部性
+
+- **同事务记录**：每批的变更行与该批的事实、规则、余额、批次行在**同一个 SQLite 事务**内发布。
+  启用快照也在 `BEGIN IMMEDIATE` 内读取 `head_seq` 并落盘，因此与提交重叠时一批要么整体在
+  基线里、要么整体在变更里，不会两边都进或都漏。失败、未提交、字节相同的重放批次都不产生
+  任何交付行；进程中断重开后，`S` 之后已提交的批次仍可导出。
+- **原子导出**：先写目标目录内的临时文件、`fsync`、再 `os.replace` 覆盖。非法区间或导出中断
+  不会留下看似可消费的半份文件，也不会破坏该路径上一份完整交付；固定区间重导内容逐字节一致。
+- **不重放、不扫描**：启用时可全库读一次建基线（分块流式，不整表入内存）；之后小批更正只按
+  主键/位置索引触及本批点名的事实；规则变更只按符号化目录差异触及受影响区间，绝不遍历无关
+  存量事实；领取近期变更只读 `delivery_change` 的 `seq` 范围与 `batch` 主键，不回放起点以来的
+  全部输入批次。导出逐条写出，内存占用与文件大小无关。

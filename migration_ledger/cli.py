@@ -12,7 +12,7 @@ import sys
 
 from migration_catalog import load_spec
 
-from .ledger import Ledger, LedgerError
+from .ledger import SCHEMA_VERSION, Ledger, LedgerError
 
 
 def _emit(value) -> None:
@@ -49,6 +49,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     seqs = sub.add_parser("seqs", help="all committed batch numbers in order")
     seqs.add_argument("db")
+
+    enable = sub.add_parser(
+        "delivery-enable",
+        help="enable per-fact delivery once and snapshot the baseline at the head",
+    )
+    enable.add_argument("db")
+
+    status = sub.add_parser("delivery-status", help="delivery start batch and size")
+    status.add_argument("db")
+
+    baseline = sub.add_parser(
+        "delivery-baseline", help="write the baseline delivery file atomically"
+    )
+    baseline.add_argument("db")
+    baseline.add_argument("out", help="destination NDJSON path")
+
+    changes = sub.add_parser(
+        "delivery-changes",
+        help="write per-batch change delivery for (LOW, HIGH] atomically",
+    )
+    changes.add_argument("db")
+    changes.add_argument("out", help="destination NDJSON path")
+    changes.add_argument("--low", type=int, required=True, help="exclusive lower batch")
+    changes.add_argument("--high", type=int, required=True, help="inclusive upper batch")
     return parser
 
 
@@ -60,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             spec = load_spec(args.spec)
             ledger = Ledger.initialize(args.db, spec)
             ledger.close()
-            _emit({"database": args.db, "schema_version": 1, "status": "initialised"})
+            _emit({"database": args.db, "schema_version": SCHEMA_VERSION,
+                   "status": "initialised"})
             return 0
 
         if args.command == "submit":
@@ -106,6 +131,17 @@ def main(argv: list[str] | None = None) -> int:
                     _emit(rows)
             elif args.command == "seqs":
                 _emit(ledger.list_committed_seqs())
+            elif args.command == "delivery-enable":
+                _emit(ledger.enable_delivery())
+            elif args.command == "delivery-status":
+                if not ledger.delivery_enabled():
+                    _emit({"enabled": False})
+                else:
+                    _emit({"enabled": True, "start_seq": ledger.delivery_start_seq()})
+            elif args.command == "delivery-baseline":
+                _emit(ledger.export_baseline(args.out))
+            elif args.command == "delivery-changes":
+                _emit(ledger.export_changes(args.low, args.high, args.out))
             else:  # pragma: no cover - argparse guarantees a command
                 parser.error("unknown command")
     except (OSError, ValueError, TypeError, KeyError, LedgerError) as exc:

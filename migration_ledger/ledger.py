@@ -28,10 +28,55 @@ from migration_catalog import Catalog, spec_from_dict
 from migration_catalog.intervals import plain_int
 from migration_catalog.model import DISABLE, MigrationSpec
 
+from .delivery import (
+    DeliveryStats,
+    is_committed,
+    iter_baseline_records,
+    iter_change_records,
+    record_batch_changes,
+    snapshot_baseline,
+    write_delivery_file,
+)
+from .errors import LedgerError
 from .keys import encode_key
 from .refresh import RefreshStats, refresh_balances
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Additive tables for the replayable per-fact delivery.  Created by
+# ``initialize`` for new ledgers, and by a lazy in-place upgrade (first
+# submission or first ``enable_delivery``) for ledgers written by v1.
+_DELIVERY_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS delivery_meta (
+        singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+        baseline_seq    INTEGER NOT NULL,
+        baseline_count  INTEGER NOT NULL,
+        enabled_at      TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS delivery_baseline (
+        fact_id         TEXT PRIMARY KEY,
+        target_space    TEXT NOT NULL,
+        new_code        TEXT NOT NULL,
+        amount          TEXT NOT NULL
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS delivery_change (
+        seq             INTEGER NOT NULL,
+        fact_id         TEXT NOT NULL,
+        before_space    TEXT,
+        before_code     TEXT,
+        before_amount   TEXT,
+        after_space     TEXT,
+        after_code      TEXT,
+        after_amount    TEXT,
+        PRIMARY KEY (seq, fact_id)
+    ) WITHOUT ROWID
+    """,
+)
 
 _SCHEMA = """
 CREATE TABLE meta (
@@ -108,10 +153,6 @@ CREATE TABLE balance (
 """
 
 
-class LedgerError(ValueError):
-    """Any rejected input or protocol violation (the ledger stays unchanged)."""
-
-
 @dataclass
 class SubmitResult:
     seq: int
@@ -119,6 +160,7 @@ class SubmitResult:
     rule_version: int
     rules_replaced: bool
     refresh: RefreshStats | None = None
+    delivery: "DeliveryStats | None" = None
 
 
 # ----------------------------------------------------------------------
@@ -384,6 +426,8 @@ class Ledger:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA synchronous=FULL")
             conn.executescript(_SCHEMA)
+            for statement in _DELIVERY_DDL:
+                conn.execute(statement)
             conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -422,7 +466,10 @@ class Ledger:
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
-        if version is None or int(version[0]) != SCHEMA_VERSION:
+        # v1 ledgers are upgraded lazily: opening one stays read-only, and the
+        # additive delivery tables are created the first time delivery is
+        # enabled.  Until then a v1 ledger behaves exactly as before.
+        if version is None or int(version[0]) not in (1, SCHEMA_VERSION):
             conn.close()
             raise LedgerError("incompatible or missing schema_version")
         raw = conn.execute(
@@ -529,11 +576,17 @@ class Ledger:
 
         try:
             self.conn.execute("BEGIN IMMEDIATE")
+            # A v1 ledger is upgraded lazily, in the same transaction as this
+            # batch, so an unenabled old ledger writes no delivery rows.
+            self._ensure_delivery_tables()
             # Capture where named facts live before any write, so the balance
-            # rows they used to contribute to are recomputed as well.
+            # rows they used to contribute to are recomputed as well, and so
+            # the delivery log can pair pre-batch and post-batch detail.
             prior_positions: set[tuple[str, int]] = set()
+            prior_rows: dict[str, dict | None] = {}
             for item in facts:
                 previous = self._storage.get_fact_by_id(item["id"])
+                prior_rows[item["id"]] = previous
                 if previous is not None:
                     prior_positions.add(
                         (previous["old_space"], previous["old_code"])
@@ -591,6 +644,7 @@ class Ledger:
                     ),
                 )
 
+            examined_positions: set[tuple[str, int]] = set()
             stats = refresh_balances(
                 self._storage,
                 old_catalog,
@@ -599,7 +653,28 @@ class Ledger:
                 prior_positions=prior_positions,
                 rules_changed=rules_replaced,
                 seq=seq,
+                position_sink=examined_positions,
             )
+
+            delivery_stats: DeliveryStats | None = None
+            if self._delivery_enabled():
+                # Read under the same IMMEDIATE write lock that guards the
+                # enabling snapshot: a batch is either entirely before ``S``
+                # (only in the baseline) or entirely after it (only changes).
+                # Runs against the already-written facts but the same
+                # pre-batch / post-batch catalogues the refresh used, inside
+                # this transaction: a batch can never be half delivered.
+                delivery_stats = record_batch_changes(
+                    self.conn,
+                    self._storage,
+                    old_catalog,
+                    new_catalog,
+                    prior_rows=prior_rows,
+                    named_ids=named_ids,
+                    rules_changed=rules_replaced,
+                    affected_positions=examined_positions,
+                    seq=seq,
+                )
 
             self.conn.execute(
                 "INSERT INTO batch (seq, sha256, payload, rule_version) "
@@ -620,6 +695,7 @@ class Ledger:
             rule_version=new_version,
             rules_replaced=rules_replaced,
             refresh=stats,
+            delivery=delivery_stats,
         )
 
     def submit_file(self, path: str | Path, **kwargs) -> SubmitResult:
@@ -684,6 +760,183 @@ class Ledger:
             "SELECT payload FROM batch WHERE seq = ?", (seq,)
         ).fetchone()
         return None if row is None else row[0]
+
+    # -- replayable delivery --------------------------------------------
+    def _delivery_meta(self):
+        """Return the delivery singleton row, creating the tables if absent.
+
+        A v1 ledger is upgraded here, first-use only; the schema_version bump
+        and the enabling snapshot share the same transaction below.
+        """
+
+        try:
+            return self.conn.execute(
+                "SELECT baseline_seq, baseline_count, enabled_at "
+                "FROM delivery_meta WHERE singleton = 1"
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return None
+
+    def _delivery_enabled(self) -> bool:
+        return self._delivery_meta() is not None
+
+    def _ensure_delivery_tables(self) -> None:
+        """Create the additive delivery tables (upgrading a v1 ledger).
+
+        Safe to call inside the caller's write transaction; a no-op for an
+        already-upgraded ledger and for every batch thereafter.
+        """
+
+        if self._schema_version() >= SCHEMA_VERSION:
+            return
+        for statement in _DELIVERY_DDL:
+            self.conn.execute(statement)
+        self.conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(SCHEMA_VERSION),),
+        )
+
+    def _schema_version(self) -> int:
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def delivery_enabled(self) -> bool:
+        """Whether the baseline snapshot has been taken on this ledger."""
+
+        return self._delivery_enabled()
+
+    def delivery_start_seq(self) -> int:
+        """``S``: the committed batch the baseline snapshot was taken at."""
+
+        meta = self._delivery_meta()
+        if meta is None:
+            raise LedgerError(
+                "delivery is not enabled; call enable_delivery() first"
+            )
+        return meta[0]
+
+    def enable_delivery(self) -> dict:
+        """Enable delivery once and snapshot the baseline.
+
+        The starting batch is the ledger's committed head at the moment this
+        first succeeds (``0`` for an empty ledger).  The snapshot is persisted,
+        so reopening the ledger or calling this again returns the identical
+        ``S`` and content instead of a fresh view of the current facts.
+
+        On a ledger with no facts and no commits the snapshot is empty, so
+        enabling and later re-enabling simply retains ``S = 0``.
+        """
+
+        meta = self._delivery_meta()
+        if meta is not None:
+            return {
+                "start_seq": meta[0],
+                "baseline_facts": meta[1],
+                "already_enabled": True,
+            }
+
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            # Upgrade a v1 ledger in the same transaction that takes the
+            # snapshot, then re-read under the write lock so a concurrent
+            # first enable (or a batch committing right now) cannot produce
+            # two snapshots.
+            self._ensure_delivery_tables()
+            meta = self._delivery_meta()
+            if meta is not None:
+                self.conn.rollback()
+                return {
+                    "start_seq": meta[0],
+                    "baseline_facts": meta[1],
+                    "already_enabled": True,
+                }
+            start_seq = self.head_seq()
+            # Rules at the end of ``start_seq`` define what is booked; no
+            # later batch may slip into the snapshot because both this read
+            # and the snapshot happen under one write lock, and the batch
+            # transaction captures its delivery rows sequentially.
+            catalog = self._catalog(self._rules_json_of(self.current_rule_version()))
+            count = snapshot_baseline(self.conn, catalog)
+            self.conn.execute(
+                "INSERT INTO delivery_meta "
+                "(singleton, baseline_seq, baseline_count, enabled_at) "
+                "VALUES (1, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                (start_seq, count),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return {
+            "start_seq": start_seq,
+            "baseline_facts": count,
+            "already_enabled": False,
+        }
+
+    def export_baseline(self, path: str | Path) -> dict:
+        """Write the baseline file for ``S`` to ``path`` atomically."""
+
+        meta = self._delivery_meta()
+        if meta is None:
+            raise LedgerError(
+                "delivery is not enabled; call enable_delivery() first"
+            )
+        start_seq, baseline_count, _ = meta
+        header = {
+            "kind": "baseline",
+            "start_seq": start_seq,
+            "fact_count": baseline_count,
+        }
+        return write_delivery_file(
+            path,
+            header,
+            iter_baseline_records(self.conn),
+            {"fact_count": baseline_count},
+        )
+
+    def export_changes(self, low: int, high: int, path: str | Path) -> dict:
+        """Write the change file for ``(low, high]`` to ``path`` atomically.
+
+        Requires ``S <= low < high`` and ``high`` already committed.  Reposting
+        the same interval after newer batches commit yields byte-identical
+        content, because only batches inside the fixed interval are read.
+        """
+
+        meta = self._delivery_meta()
+        if meta is None:
+            raise LedgerError(
+                "delivery is not enabled; call enable_delivery() first"
+            )
+        start_seq = meta[0]
+        if isinstance(low, bool) or not isinstance(low, int):
+            raise LedgerError("interval low must be an integer")
+        if isinstance(high, bool) or not isinstance(high, int):
+            raise LedgerError("interval high must be an integer")
+        if low < start_seq:
+            raise LedgerError(
+                f"interval low {low} is before the delivery start {start_seq}"
+            )
+        if low >= high:
+            raise LedgerError(
+                f"interval must satisfy low < high, got ({low}, {high}]"
+            )
+        if not is_committed(self.conn, high):
+            head = self.head_seq()
+            raise LedgerError(
+                f"upper bound {high} is not a committed batch (head is {head})"
+            )
+
+        header = {"kind": "changes", "start_seq": start_seq, "low": low, "high": high}
+        return write_delivery_file(
+            path,
+            header,
+            iter_change_records(self.conn, low, high),
+            {"low": low, "high": high, "last_seq": high},
+        )
 
 
 def _spec_json(spec: MigrationSpec) -> dict:

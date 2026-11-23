@@ -210,6 +210,7 @@ def refresh_balances(
     prior_positions: set[tuple[str, int]],
     rules_changed: bool,
     seq: int,
+    position_sink: set[tuple[str, int]] | None = None,
 ) -> RefreshStats:
     """Recompute exactly the balance rows affected by one committed batch.
 
@@ -221,6 +222,12 @@ def refresh_balances(
     ``prior_positions`` holds the source positions the named facts occupied
     before the batch's writes/deletes, so a moved or deleted fact's old balance
     row is recomputed (and removed when it was the last contributor).
+
+    If ``position_sink`` is given, every source position this refresh examined
+    is added to it.  That set is a superset of the positions whose *per-fact*
+    delivered detail can change: both the source-side mapping signature and
+    the target-side reverse classification are covered by the same symbolic
+    diff.  The delivery layer reuses it instead of diffing the catalogues again.
 
     The candidate set is made of *source positions* ``(old_space, old_code)``;
     target-space keys are translated back through the catalogues' preimages.
@@ -296,6 +303,8 @@ def refresh_balances(
     # (4) Recompute every candidate from the end-of-batch catalogue and facts.
     stats.facts_by_range = len(range_fetched)
     stats.candidates = len(source_candidates)
+    if position_sink is not None:
+        position_sink.update(source_candidates)
     for old_space, old_code in sorted(source_candidates):
         _recompute_one(db, new_catalog, old_space, old_code, stats, seq, range_fetched)
     return stats
